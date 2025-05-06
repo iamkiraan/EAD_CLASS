@@ -1,0 +1,207 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Note-Taking App</title>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/sql.js/1.8.0/sql-wasm.min.js"></script>
+  <style>
+    body {
+      font-family: Arial, sans-serif;
+      margin: 0;
+      padding: 0;
+      background-color: #f4f4f4;
+    }
+    .container {
+      max-width: 800px;
+      margin: 20px auto;
+      padding: 20px;
+      background: white;
+      box-shadow: 0 0 10px rgba(0,0,0,0.1);
+    }
+    h1 {
+      text-align: center;
+      color: #333;
+    }
+    .note-form {
+      margin-bottom: 20px;
+    }
+    .note-form input, .note-form textarea {
+      width: 100%;
+      padding: 10px;
+      margin: 10px 0;
+      border: 1px solid #ddd;
+      border-radius: 4px;
+      box-sizing: border-box;
+    }
+    .note-form button {
+      padding: 10px 20px;
+      background: #28a745;
+      color: white;
+      border: none;
+      border-radius: 4px;
+      cursor: pointer;
+    }
+    .note-form button:hover {
+      background: #218838;
+    }
+    .note {
+      border: 1px solid #ddd;
+      padding: 15px;
+      margin: 10px 0;
+      border-radius: 4px;
+      background: #fff;
+    }
+    .note h3 {
+      margin: 0 0 10px;
+      color: #333;
+    }
+    .note p {
+      margin: 0 0 10px;
+      color: #555;
+    }
+    .note button {
+      padding: 5px 10px;
+      margin-right: 5px;
+      border: none;
+      border-radius: 4px;
+      cursor: pointer;
+    }
+    .note button.edit {
+      background: #007bff;
+      color: white;
+    }
+    .note button.edit:hover {
+      background: #0056b3;
+    }
+    .note button.delete {
+      background: #dc3545;
+      color: white;
+    }
+    .note button.delete:hover {
+      background: #c82333;
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <h1>Note-Taking App</h1>
+    <div class="note-form">
+      <input type="text" id="note-title" placeholder="Note Title" required>
+      <textarea id="note-content" placeholder="Note Content" required></textarea>
+      <button onclick="saveNote()">Save Note</button>
+    </div>
+    <div id="notes-list"></div>
+  </div>
+
+  <script>
+    let db;
+    let editingNoteId = null;
+    const DB_STORAGE_KEY = 'notes_db';
+
+    // Initialize SQLite database
+    async function initDb() {
+      const SQL = await initSqlJs({
+        locateFile: file => `https://cdnjs.cloudflare.com/ajax/libs/sql.js/1.8.0/${file}`
+      });
+
+      // Load database from localStorage or create a new one
+      const savedDb = localStorage.getItem(DB_STORAGE_KEY);
+      if (savedDb) {
+        const dbArray = new Uint8Array(JSON.parse(savedDb));
+        db = new SQL.Database(dbArray);
+      } else {
+        db = new SQL.Database();
+        db.run(`
+          CREATE TABLE IF NOT EXISTS notes (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            title TEXT NOT NULL,
+            content TEXT NOT NULL,
+            created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+          );
+        `);
+      }
+
+      fetchNotes();
+    }
+
+    // Save database to localStorage
+    function saveDb() {
+      const dbArray = db.export();
+      localStorage.setItem(DB_STORAGE_KEY, JSON.stringify(Array.from(dbArray)));
+    }
+
+    // Fetch and display all notes
+    function fetchNotes() {
+      const res = db.exec('SELECT * FROM notes ORDER BY created_at DESC');
+      const notes = res.length > 0 ? res[0].values.map(row => ({
+        id: row[0],
+        title: row[1],
+        content: row[2],
+        created_at: row[3]
+      })) : [];
+      const notesList = document.getElementById('notes-list');
+      notesList.innerHTML = '';
+      notes.forEach(note => {
+        const noteElement = document.createElement('div');
+        noteElement.className = 'note';
+        // Escape single quotes in title and content to prevent JS errors
+        const escapedTitle = note.title.replace(/'/g, "\\'");
+        const escapedContent = note.content.replace(/'/g, "\\'");
+        noteElement.innerHTML = `
+          <h3>${note.title}</h3>
+          <p>${note.content}</p>
+          <small>Created: ${new Date(note.created_at).toLocaleString()}</small>
+          <button class="edit" onclick="editNote(${note.id}, '${escapedTitle}', '${escapedContent}')">Edit</button>
+          <button class="delete" onclick="deleteNote(${note.id})">Delete</button>
+        `;
+        notesList.appendChild(noteElement);
+      });
+    }
+
+    // Save or update a note
+    function saveNote() {
+      const title = document.getElementById('note-title').value;
+      const content = document.getElementById('note-content').value;
+      if (!title || !content) {
+        alert('Please enter both title and content');
+        return;
+      }
+
+      if (editingNoteId) {
+        // Update existing note
+        db.run('UPDATE notes SET title = ?, content = ? WHERE id = ?', [title, content, editingNoteId]);
+      } else {
+        // Insert new note
+        db.run('INSERT INTO notes (title, content) VALUES (?, ?)', [title, content]);
+      }
+
+      // Save database to localStorage
+      saveDb();
+
+      // Reset form
+      document.getElementById('note-title').value = '';
+      document.getElementById('note-content').value = '';
+      editingNoteId = null;
+      fetchNotes();
+    }
+
+    // Edit a note
+    function editNote(id, title, content) {
+      editingNoteId = id;
+      document.getElementById('note-title').value = title;
+      document.getElementById('note-content').value = content;
+    }
+
+    // Delete a note
+    function deleteNote(id) {
+      db.run('DELETE FROM notes WHERE id = ?', [id]);
+      saveDb();
+      fetchNotes();
+    }
+
+    // Initialize database when the page loads
+    document.addEventListener('DOMContentLoaded', initDb);
+  </script>
+</body>
+</html>
